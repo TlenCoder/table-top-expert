@@ -1,0 +1,226 @@
+{
+  "name": "RAG Ingestion (Filesystem → OCR → Qdrant)",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 0,
+              "minute": 0,
+              "seconds": 0,
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "id": "Cron",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "directory": "/home/node/files/incoming",
+        "recursive": false,
+        "allowEmpty": true,
+        "options": {
+          "filetype": "file",
+          "globPatterns": "*.pdf"
+        }
+      },
+      "id": "List Files",
+      "name": "List Files",
+      "type": "n8n-nodes-base.listFiles",
+      "typeVersion": 1,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "id": "Split In Batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "={{$json.path}}",
+        "binaryPropertyName": "data"
+      },
+      "id": "Read Binary File",
+      "name": "Read Binary File",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "hash",
+        "type": "sha256",
+        "value": "binary",
+        "binaryPropertyName": "data",
+        "outputPropertyName": "file_hash"
+      },
+      "id": "Crypto",
+      "name": "Crypto (SHA-256)",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [1140, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            { "name": "file_path", "value": "={{$json.path}}" },
+            { "name": "file_name", "value": "={{$json.fileName}}" },
+            { "name": "file_hash", "value": "={{$json.file_hash}}" }
+          ]
+        }
+      },
+      "id": "Meta",
+      "name": "Meta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [1380, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://qdrant:6333/collections/docs/points/delete",
+        "sendBody": true,
+        "jsonParameters": true,
+        "contentType": "json",
+        "bodyParametersJson": "{\n  \"filter\": { \n    \"must\": [ { \"key\": \"file_hash\", \"match\": { \"value\": \"={{$json.file_hash}}\" } } ]\n  }\n}"
+      },
+      "id": "Qdrant Delete (by file_hash)",
+      "name": "Qdrant Delete (by file_hash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1620, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://ocr:8000/general/v0/general",
+        "options": {
+          "splitIntoItems": true,
+          "qs": {
+            "strategy": "hi_res",
+            "ocr_languages": "rus,ukr"
+          }
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "data"
+      },
+      "id": "OCR (Unstructured)",
+      "name": "OCR (Unstructured)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1860, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const keep = new Set(['NarrativeText','Title','ListItem','Paragraph']);\nconst texts = items.filter(i => keep.has(i.json?.type) && i.json?.text).map(i => i.json.text.trim());\nreturn [{ json: { text: texts.join('\\n\\n'), file_path: $node['Meta'].json['file_path'], file_hash: $node['Meta'].json['file_hash'] } }];"
+      },
+      "id": "Assemble Text",
+      "name": "Assemble Text",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2100, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const text = $json.text || '';\nconst size = 1000, overlap = 200; const out = [];\nfor (let start = 0, idx = 0; start < text.length; start += (size - overlap), idx++) {\n  out.push({ json: { chunk: text.slice(start, Math.min(text.length, start + size)), idx, file_path: $json.file_path, file_hash: $json.file_hash, created_at: new Date().toISOString() } });\n}\nreturn out;"
+      },
+      "id": "Chunk",
+      "name": "Chunk",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2340, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedText",
+        "sendBody": true,
+        "jsonParameters": true,
+        "contentType": "json",
+        "bodyParametersJson": "{\n  \"text\": \"={{$json.chunk}}\"\n}"
+      },
+      "id": "Gemini Embed",
+      "name": "Gemini Embed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": { "string": [ { "name": "vector", "value": "={{$json.embedding.values}}" } ] }
+      },
+      "id": "Vector",
+      "name": "Vector",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2820, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://qdrant:6333/collections/docs/points",
+        "sendBody": true,
+        "jsonParameters": true,
+        "contentType": "json",
+        "bodyParametersJson": "{\n  \"points\": [\n    {\n      \"id\": \"={{$now.epoch}}-{{$json.idx}}\",\n      \"vector\": \"={{$json.vector}}\",\n      \"payload\": {\n        \"file_path\": \"={{$json.file_path}}\",\n        \"file_hash\": \"={{$json.file_hash}}\",\n        \"chunk_idx\": \"={{$json.idx}}\",\n        \"chunk\": \"={{$json.chunk}}\",\n        \"created_at\": \"={{$json.created_at}}\"\n      }\n    }\n  ]\n}"
+      },
+      "id": "Qdrant Upsert",
+      "name": "Qdrant Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3060, 300]
+    },
+    {
+      "parameters": {
+        "command": "mv \"{{$node['Meta'].json['file_path']}}\" \"/home/node/files/processed/\""
+      },
+      "id": "Move to processed",
+      "name": "Move to processed",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [3300, 300]
+    },
+    {
+      "parameters": {},
+      "id": "Next Batch",
+      "name": "Next Batch",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3540, 300]
+    }
+  ],
+  "connections": {
+    "Cron": { "main": [[ { "node": "List Files", "type": "main", "index": 0 } ]] },
+    "List Files": { "main": [[ { "node": "Split In Batches", "type": "main", "index": 0 } ]] },
+    "Split In Batches": { "main": [[ { "node": "Read Binary File", "type": "main", "index": 0 } ]] },
+    "Read Binary File": { "main": [[ { "node": "Crypto (SHA-256)", "type": "main", "index": 0 } ]] },
+    "Crypto (SHA-256)": { "main": [[ { "node": "Meta", "type": "main", "index": 0 } ]] },
+    "Meta": { "main": [[ { "node": "Qdrant Delete (by file_hash)", "type": "main", "index": 0 } ]] },
+    "Qdrant Delete (by file_hash)": { "main": [[ { "node": "OCR (Unstructured)", "type": "main", "index": 0 } ]] },
+    "OCR (Unstructured)": { "main": [[ { "node": "Assemble Text", "type": "main", "index": 0 } ]] },
+    "Assemble Text": { "main": [[ { "node": "Chunk", "type": "main", "index": 0 } ]] },
+    "Chunk": { "main": [[ { "node": "Gemini Embed", "type": "main", "index": 0 } ]] },
+    "Gemini Embed": { "main": [[ { "node": "Vector", "type": "main", "index": 0 } ]] },
+    "Vector": { "main": [[ { "node": "Qdrant Upsert", "type": "main", "index": 0 } ]] },
+    "Qdrant Upsert": { "main": [[ { "node": "Move to processed", "type": "main", "index": 0 } ]] },
+    "Move to processed": { "main": [[ { "node": "Next Batch", "type": "main", "index": 0 } ]] }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "pinData": {}
+}

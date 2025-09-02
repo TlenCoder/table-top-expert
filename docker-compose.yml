@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST
+      - "6334:6334"  # gRPC
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    networks:
+      - rag-net
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    depends_on:
+      - qdrant
+    environment:
+      - TZ=UTC
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_TELEMETRY_ENABLED=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false  # helpful on Windows volumes
+      # Encrypt credentials at rest
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      # Auto-import workflows on startup (imports only if missing)
+      - N8N_IMPORT_EXPORT_WORKFLOWS=true
+      - N8N_IMPORT_EXPORT_WORKFLOW_LOCATION=/docker-import/workflows
+      - N8N_IMPORT_EXPORT_OVERWRITE=false
+      # Optional basic auth for the editor UI
+      # - N8N_BASIC_AUTH_ACTIVE=true
+      # - N8N_BASIC_AUTH_USER=admin
+      # - N8N_BASIC_AUTH_PASSWORD=change-me
+    volumes:
+      - ./data/n8n/.n8n:/home/node/.n8n
+      - ./data/n8n/files:/home/node/files
+      - ./data/n8n/workflows:/docker-import/workflows:ro
+    networks:
+      - rag-net
+
+  ui:
+    image: nginx:alpine
+    container_name: rag-ui
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - n8n
+    volumes:
+      - ./ui/dist:/usr/share/nginx/html:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - rag-net
+
+networks:
+  rag-net:
+    driver: bridge

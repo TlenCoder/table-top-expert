@@ -1,0 +1,142 @@
+{
+  "name": "RAG Chat Webhook (Gemini + Qdrant)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat",
+        "responseMode": "lastNode"
+      },
+      "id": "Webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const body = $json.body || $json;\nconst q = body.question || '';\nconst session_id = body.session_id || '';\nif (!q) { return [{ json: { error: 'Missing question' } }]; }\nreturn [{ json: { question: q, session_id } }];"
+      },
+      "id": "Extract Question",
+      "name": "Extract Question",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedText",
+        "options": {},
+        "sendBody": true,
+        "jsonParameters": true,
+        "contentType": "json",
+        "bodyParametersJson": "{\n  \"text\": \"={{$json.question}}\"\n}"
+      },
+      "id": "Gemini Embed",
+      "name": "Gemini Embed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "vector",
+              "value": "={{$json.embedding.values}}"
+            }
+          ]
+        }
+      },
+      "id": "Vector",
+      "name": "Vector",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://qdrant:6333/collections/docs/points/search",
+        "sendBody": true,
+        "jsonParameters": true,
+        "contentType": "json",
+        "bodyParametersJson": "{\n  \"vector\": \"={{$json.vector}}\",\n  \"limit\": 5,\n  \"with_payload\": true,\n  \"score_threshold\": 0.2\n}"
+      },
+      "id": "Qdrant Search",
+      "name": "Qdrant Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const res = $json.result || $json;\nconst hits = Array.isArray(res) ? res : (res?.result || res?.hits || res?.points || []);\nconst contexts = hits.slice(0,5).map((h,i) => `[#${i+1}] ${(h.payload?.chunk || '').trim()}`);\nconst q = $node['Extract Question'].json['question'];\nconst prompt = `Use the context to answer in the user's language. Cite sources as [#n].\\n\\nContext:\\n${contexts.join('\\n\\n')}\\n\\nQuestion: ${q}\\nAnswer:`;\nreturn [{ json: { prompt } }];"
+      },
+      "id": "Compose Prompt",
+      "name": "Compose Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "sendBody": true,
+        "jsonParameters": true,
+        "contentType": "json",
+        "bodyParametersJson": "{\n  \"contents\": [ { \"parts\": [ { \"text\": \"={{$json.prompt}}\" } ] } ]\n}"
+      },
+      "id": "Gemini Generate",
+      "name": "Gemini Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1640, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            { "name": "output", "value": "={{$json.candidates[0].content.parts[0].text}}" },
+            { "name": "session_id", "value": "={{$node['Extract Question'].json['session_id']}}" }
+          ]
+        }
+      },
+      "id": "Output",
+      "name": "Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [1880, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"output\": \"={{$json.output}}\",\n  \"session_id\": \"={{$json.session_id}}\"\n}"
+      },
+      "id": "Respond to Webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[ { "node": "Extract Question", "type": "main", "index": 0 } ]] },
+    "Extract Question": { "main": [[ { "node": "Gemini Embed", "type": "main", "index": 0 } ]] },
+    "Gemini Embed": { "main": [[ { "node": "Vector", "type": "main", "index": 0 } ]] },
+    "Vector": { "main": [[ { "node": "Qdrant Search", "type": "main", "index": 0 } ]] },
+    "Qdrant Search": { "main": [[ { "node": "Compose Prompt", "type": "main", "index": 0 } ]] },
+    "Compose Prompt": { "main": [[ { "node": "Gemini Generate", "type": "main", "index": 0 } ]] },
+    "Gemini Generate": { "main": [[ { "node": "Output", "type": "main", "index": 0 } ]] },
+    "Output": { "main": [[ { "node": "Respond to Webhook", "type": "main", "index": 0 } ]] }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null,
+  "pinData": {}
+}

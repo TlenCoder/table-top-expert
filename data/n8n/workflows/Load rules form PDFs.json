@@ -1,0 +1,454 @@
+{
+  "name": "Load rules form PDFs",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "id": "935d371f-f28e-450c-91c8-7f4799ea8f52",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -192,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "f76ca00d-391e-47d0-83bc-9060e8261532",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        432,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "file_path",
+              "value": "={{$json.path}}"
+            },
+            {
+              "name": "file_name",
+              "value": "={{$json.fileName}}"
+            },
+            {
+              "name": "file_hash",
+              "value": "={{$json.file_hash}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1098bc26-49c3-404c-a243-de8b4d56977c",
+      "name": "Meta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        944,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/docs/points/delete",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"filter\": { \n\"must\": [\n{ \"key\": \"file_hash\", \"match\": { \"value\": \"{{$json.file_hash}}\" } } ] }}",
+        "options": {}
+      },
+      "id": "57a9ad84-2c95-4488-8fba-f7a74a77d490",
+      "name": "Qdrant Delete (by file_hash)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1744,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=mv \"/home/node/files/incoming/{{$node['Meta'].json['file_name']}}\" \"/home/node/files/processed/\""
+      },
+      "id": "4296631e-875f-4c1f-8284-26b5a862a13a",
+      "name": "Move to processed",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2576,
+        -48
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a06490c0-ed28-4f05-9d2c-b14e5c3ec445",
+      "name": "Next Batch",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "type": "SHA256",
+        "binaryData": true,
+        "dataPropertyName": "file_hash",
+        "encoding": "base64"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        688,
+        -128
+      ],
+      "id": "192017be-bc21-4549-8442-299f8f33be95",
+      "name": "Crypto"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/files/incoming/**/*.pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        96,
+        32
+      ],
+      "id": "14e3623c-307d-4898-861a-7af0f0747dda",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        208
+      ],
+      "id": "5b6fd590-4b44-476f-a1af-9760c82ff055",
+      "name": "Embeddings Google Gemini",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "vZXfK7x9ONPAHWYF",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "file_hash",
+                "value": "={{ $json.file_hash }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2384,
+        208
+      ],
+      "id": "9058d3ee-9e63-4882-9455-fb8d1ab9493b",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "resource": "document",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-1.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-1.5-flash"
+        },
+        "text": "Вытяни весь текст из pdf файла. Сохрани порядок страниц и абзацев. Верни только полный текст документа",
+        "inputType": "binary",
+        "options": {
+          "maxOutputTokens": 200000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        864,
+        64
+      ],
+      "id": "747ebe8a-7515-4d83-88f7-c12ea8cf4465",
+      "name": "Analyze document",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "vZXfK7x9ONPAHWYF",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "docs",
+          "mode": "list",
+          "cachedResultName": "docs"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        2208,
+        -48
+      ],
+      "id": "57163468-3985-42e2-91c8-8661fd7ffbd8",
+      "name": "Qdrant Vector Store",
+      "credentials": {
+        "qdrantApi": {
+          "id": "ejrqAm6Q9CI91BMu",
+          "name": "QdrantApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.content.parts[0].text || '';\nconst size = 1000, overlap = 200; const out = [];\nfor (let start = 0, idx = 0; start < text.length; start += (size - overlap), idx++) {\n  out.push({ json: { chunk: text.slice(start, Math.min(text.length, start + size)), idx, file_path: $('Meta').item.json.file_name, file_hash: $json.file_hash, created_at: new Date().toISOString() } });\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        32
+      ],
+      "id": "907a2f97-3d17-4762-ae44-24ce4d798f3d",
+      "name": "Code1",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1248,
+        32
+      ],
+      "id": "a5629eb4-3240-42c7-8772-606a2ab8e136",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1968,
+        -96
+      ],
+      "id": "daa1a3fd-358e-4221-b80c-3703b1e086a8",
+      "name": "Merge1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Crypto",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Analyze document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Delete (by file_hash)": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Move to processed": {
+      "main": [
+        [
+          {
+            "node": "Next Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crypto": {
+      "main": [
+        [
+          {
+            "node": "Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze document": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store": {
+      "main": [
+        [
+          {
+            "node": "Move to processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Qdrant Delete (by file_hash)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1147d7c7-ba1b-40bc-b093-6aa259a9c5a6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f42038e89825e6263c6919cb22acf62c06802de852d2a95867b8f55e01e548d8"
+  },
+  "id": "QOkT5VCPDVroHBaq",
+  "tags": []
+}
